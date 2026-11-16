@@ -30,6 +30,25 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+# 固定路径必须排在 /{entry_id} 之前，否则导出接口会被当成编号解析而 422。
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出流告警规则清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "alarm", "total": total, "items": items}
+
+
+@router.get("/results")
+def list_results(
+    rule_code: str | None = Query(default=None, description="按规则编号过滤告警结果"),
+) -> dict[str, Any]:
+    """列出告警结果：消费暂停中的窗口配置版本数据时不会新增记录，便于核对。"""
+    items, total = service.list_results(rule_code=rule_code)
+    return {"module": "alarm_result", "total": total, "items": items}
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条告警规则明细；不存在时给出可读的错误说明。"""
@@ -58,8 +77,19 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     return ActionResult(ok=True, message=message, entry=entry)
 
 
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出流告警规则清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "alarm", "total": total, "items": items}
+@router.post("/{entry_id}/consume", response_model=dict)
+def consume_window_version(entry_id: int, payload: EntryPayload) -> dict[str, Any]:
+    """消费共享的窗口配置版本数据：暂停结论与新告警结果互斥，消费侧写回自身状态。"""
+    version_code = str(payload.values.get("版本编号") or "").strip()
+    if not version_code:
+        return {"ok": False, "message": "缺少必填字段：版本编号", "conclusion": None, "alarm_result": None, "entry": None}
+    entry, conclusion, alarm_result, message = service.consume_window_version(entry_id, version_code)
+    if entry is None:
+        return {"ok": False, "message": message, "conclusion": None, "alarm_result": None, "entry": None}
+    return {
+        "ok": True,
+        "message": message,
+        "conclusion": conclusion,
+        "alarm_result": alarm_result,
+        "entry": entry,
+    }

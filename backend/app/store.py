@@ -4,7 +4,9 @@
 """
 from __future__ import annotations
 
-from typing import Any
+import threading
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 from app.seed import SEED_ROWS
 
@@ -14,6 +16,7 @@ class Store:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+        self._lock = threading.RLock()
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)
@@ -26,6 +29,23 @@ class Store:
             if int(row.get("id", 0)) == entry_id:
                 return row
         return None
+
+    def find_by(self, module: str, field: str, value: Any) -> dict[str, Any] | None:
+        for row in self.rows(module):
+            if row.get(field) == value:
+                return row
+        return None
+
+    @contextmanager
+    def transaction(self) -> Iterator["Store"]:
+        """把一组跨表写入包进同一个事务：暂停标记、窗口状态等要么一起落库，要么一起回滚。"""
+        with self._lock:
+            snapshot = {name: [dict(row) for row in rows] for name, rows in self._tables.items()}
+            try:
+                yield self
+            except Exception:
+                self._tables = snapshot
+                raise
 
     def overview(self) -> dict[str, object]:
         modules: list[dict[str, object]] = []

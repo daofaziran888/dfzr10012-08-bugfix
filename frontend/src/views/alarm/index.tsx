@@ -45,7 +45,9 @@ export default function AlarmView() {
   const [rows, setRows] = useState<Row[]>([])
   const [total, setTotal] = useState(0)
   const [errorMessage, setErrorMessage] = useState('')
+  const [noticeMessage, setNoticeMessage] = useState('')
   const [filters, setFilters] = useState<Record<string, string>>({})
+  const [versionCode, setVersionCode] = useState('')
   const filterFields = useMemo(() => columns.slice(0, 3), [])
 
   const reload = useCallback(async () => {
@@ -70,6 +72,7 @@ export default function AlarmView() {
 
   async function runAction(action: string, row: Row) {
     setErrorMessage('')
+    setNoticeMessage('')
     try {
       const response = await request(`${ENDPOINT}/${row.id}/actions`, {
         method: 'POST',
@@ -81,6 +84,29 @@ export default function AlarmView() {
       await reload()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '流告警规则操作失败')
+    }
+  }
+
+  async function consumeWindowVersion(row: Row) {
+    setErrorMessage('')
+    setNoticeMessage('')
+    if (!versionCode.trim()) {
+      setErrorMessage('请先填写要消费的窗口配置版本编号')
+      return
+    }
+    try {
+      const response = await request(`${ENDPOINT}/${row.id}/consume`, {
+        method: 'POST',
+        body: JSON.stringify({ 版本编号: versionCode.trim() }),
+      })
+      const payload = await response.json()
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.message ?? '窗口配置版本数据消费失败')
+      }
+      setNoticeMessage(payload.message ?? '窗口配置版本数据已消费')
+      await reload()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '窗口配置版本数据消费失败')
     }
   }
 
@@ -123,6 +149,14 @@ export default function AlarmView() {
         ))}
         <button className="btn" type="submit">查询</button>
         <button className="btn ghost" type="button" onClick={() => setFilters({})}>重置条件</button>
+        <label className="filter-item">
+          <span>窗口配置版本编号</span>
+          <input
+            value={versionCode}
+            placeholder="如 WIND-0002-v1"
+            onChange={(event) => setVersionCode(event.target.value)}
+          />
+        </label>
       </form>
 
       <table className="data-table">
@@ -142,6 +176,9 @@ export default function AlarmView() {
                     {action}
                   </button>
                 ))}
+                <button className="link" type="button" onClick={() => void consumeWindowVersion(row)}>
+                  消费窗口配置
+                </button>
               </td>
             </tr>
           ))}
@@ -155,6 +192,7 @@ export default function AlarmView() {
 
       <footer className="page-foot">
         <span>共 {total} 条流告警规则记录</span>
+        {noticeMessage && <span className="notice-text">{noticeMessage}</span>}
         {errorMessage && <span className="error-text">{errorMessage}</span>}
       </footer>
     </section>
